@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>고객관리프로그램</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a href="/" class="home-link">← 홈페이지</a>
+  <h1>고객관리</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-view="list">고객 목록</button>
+    <button class="tab-btn" data-view="management">고객관리</button>
+    <button class="tab-btn" data-view="companies">보험회사별 보기</button>
+    <button class="tab-btn" data-view="upload">증권/진단서 등록</button>
+    <button class="tab-btn" data-view="inquiries">상담문의</button>
+  </nav>
+</header>
+
+<main id="app"></main>
+
+<div id="modal-root"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

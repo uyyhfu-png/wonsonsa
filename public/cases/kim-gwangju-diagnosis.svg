@@ -1,0 +1,63 @@
+<svg viewBox="0 0 600 820" xmlns="http://www.w3.org/2000/svg" font-family="'Malgun Gothic', 'Segoe UI', sans-serif">
+  <rect x="1" y="1" width="598" height="818" fill="#ffffff" stroke="#d0d5dd" stroke-width="2"/>
+
+  <text x="300" y="64" font-size="30" font-weight="700" fill="#14235a" text-anchor="middle" letter-spacing="14">진 단 서</text>
+  <line x1="48" y1="92" x2="552" y2="92" stroke="#14235a" stroke-width="2"/>
+
+  <!-- info table -->
+  <g font-size="15" fill="#171e33">
+    <!-- row 1: 성명 -->
+    <line x1="48" y1="140" x2="552" y2="140" stroke="#e4e8f1"/>
+    <text x="64" y="128" fill="#5b6478">성  명</text>
+    <text x="180" y="128" font-weight="600">김*주 (남, 65세)</text>
+
+    <!-- row 2: 병명 (강조) -->
+    <rect x="48" y="140" width="504" height="90" fill="#eaf0fe"/>
+    <line x1="48" y1="230" x2="552" y2="230" stroke="#e4e8f1"/>
+    <text x="64" y="180" fill="#5b6478" font-weight="600">병  명</text>
+    <text x="180" y="184" font-size="21" font-weight="700" fill="#14235a">결장의 선종증 (고등급 선종)</text>
+    <g>
+      <rect x="180" y="198" width="150" height="26" rx="13" fill="#1d4ed8"/>
+      <text x="255" y="216" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">D12.6</text>
+    </g>
+
+    <!-- row 3: 임상적 소견 -->
+    <line x1="48" y1="298" x2="552" y2="298" stroke="#e4e8f1"/>
+    <text x="64" y="272" fill="#5b6478">임상적 소견</text>
+    <text x="180" y="268" font-size="14">대장내시경 검사에서 다발성 용종 발견</text>
+    <text x="180" y="288" font-size="14">내시경점막절제술(EMR) 및 용종절제술 시행</text>
+
+    <!-- row 4: 조직검사 결과 -->
+    <line x1="48" y1="346" x2="552" y2="346" stroke="#e4e8f1"/>
+    <text x="64" y="326" fill="#5b6478">조직검사 결과</text>
+    <text x="180" y="326" font-weight="600">고등급 선종 확인</text>
+
+    <!-- row 5: 진단 연월일 -->
+    <line x1="48" y1="394" x2="552" y2="394" stroke="#e4e8f1"/>
+    <text x="64" y="374" fill="#5b6478">진단 연월일</text>
+    <text x="180" y="374">2025. 10. 20.</text>
+
+    <!-- row 6: 용도 -->
+    <line x1="48" y1="442" x2="552" y2="442" stroke="#e4e8f1"/>
+    <text x="64" y="422" fill="#5b6478">용  도</text>
+    <text x="180" y="422">보험사 제출용 (유사암진단비 청구)</text>
+  </g>
+
+  <text x="300" y="512" font-size="16" text-anchor="middle" fill="#171e33">위와 같이 진단함.</text>
+
+  <g font-size="14" fill="#171e33">
+    <text x="300" y="582" text-anchor="middle">발행일자 : 2025. 10. 27.</text>
+    <text x="300" y="608" text-anchor="middle">의료기관명 : OO내과의원</text>
+    <text x="300" y="634" text-anchor="middle">의사 성명 : OOO</text>
+  </g>
+
+  <!-- seal -->
+  <circle cx="470" cy="642" r="44" fill="none" stroke="#c0392b" stroke-width="3"/>
+  <text x="470" y="638" font-size="13" fill="#c0392b" text-anchor="middle">의료기관</text>
+  <text x="470" y="656" font-size="13" fill="#c0392b" text-anchor="middle">직인</text>
+
+  <line x1="48" y1="760" x2="552" y2="760" stroke="#e4e8f1"/>
+  <text x="300" y="790" font-size="12" fill="#5b6478" text-anchor="middle">
+    * 개인정보 보호를 위해 실제 서류를 바탕으로 재구성한 예시 이미지입니다.
+  </text>
+</svg>
