@@ -302,7 +302,32 @@ function customerDetailBody(customer) {
       <button type="submit" class="primary">파일 추가</button>
     </form>
     <div data-doc-error></div>
+
+    <h3>통화내역 <span class="muted" style="font-weight:400;font-size:12px;">(연락처 ${esc(customer.phone)} 기준 자동 조회)</span></h3>
+    ${callLogsHtml(customer.call_logs)}
+
+    <form data-call-log-form style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">
+      <input type="date" name="call_date" required />
+      <input type="text" name="content" placeholder="통화 내용 요약" required style="flex:1;min-width:200px;" />
+      <button type="submit" class="primary">통화내역 추가</button>
+    </form>
+    <div data-call-log-error></div>
   `;
+}
+
+function callLogsHtml(callLogs) {
+  if (!callLogs || !callLogs.length) {
+    return '<p class="muted">등록된 통화내역이 없습니다.</p>';
+  }
+  return `<ul class="doc-list">${callLogs
+    .map(
+      (l) => `
+    <li>
+      <span><strong>${esc(l.call_date)}</strong> ${esc(l.content)}</span>
+      <button class="danger" data-delete-call="${l.id}">삭제</button>
+    </li>`
+    )
+    .join('')}</ul>`;
 }
 
 function bindCustomerDetailEvents(root, customer, hooks) {
@@ -345,6 +370,34 @@ function bindCustomerDetailEvents(root, customer, hooks) {
       hooks.onChanged();
     } catch (err) {
       root.querySelector('[data-doc-error]').innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
+    }
+  });
+
+  root.querySelectorAll('[data-delete-call]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('이 통화내역을 삭제하시겠습니까?')) return;
+      await api(`/api/call-logs/${btn.dataset.deleteCall}`, { method: 'DELETE' });
+      hooks.onChanged();
+    });
+  });
+
+  root.querySelector('[data-call-log-form]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    try {
+      await api('/api/call-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: customer.phone,
+          name: customer.name,
+          call_date: form.get('call_date'),
+          content: form.get('content').trim(),
+        }),
+      });
+      hooks.onChanged();
+    } catch (err) {
+      root.querySelector('[data-call-log-error]').innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
     }
   });
 }
@@ -755,6 +808,113 @@ async function renderManagementView(query = '') {
   await loadManagementTable();
 }
 
+// ---- 통화내역 (전화번호를 고객 분류번호로 사용) ----
+async function renderCallLogsView(phoneFilter = '') {
+  app.innerHTML = `
+    <div class="card">
+      <h2>통화내역 등록</h2>
+      <p class="muted">전화번호를 고객 분류번호로 사용합니다. 같은 번호로 여러 날짜의 통화를 이어서 등록할 수 있습니다.</p>
+      <form id="call-log-form" class="form-grid">
+        <label>전화번호 *
+          <input type="text" name="phone" placeholder="010-000-0000" required />
+        </label>
+        <label>이름
+          <input type="text" name="name" placeholder="고객 이름" />
+        </label>
+        <label>통화일자 *
+          <input type="date" name="call_date" required />
+        </label>
+        <label class="full">업무내용 (통화 요약) *
+          <textarea name="content" rows="3" placeholder="통화 내용을 요약해서 적어주세요" required></textarea>
+        </label>
+        <div class="actions-row full">
+          <button type="submit" class="primary">통화내역 추가</button>
+        </div>
+      </form>
+      <div id="call-log-error"></div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="call-log-search" placeholder="전화번호로 조회 (예: 010-8732-8681)" value="${esc(phoneFilter)}" style="flex:1;min-width:200px;" />
+      </div>
+      <div id="call-log-body">불러오는 중...</div>
+    </div>
+  `;
+
+  const form = document.getElementById('call-log-form');
+  const phoneInput = form.elements.phone;
+  const nameInput = form.elements.name;
+  if (phoneFilter) phoneInput.value = phoneFilter;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = new FormData(form);
+    try {
+      await api('/api/call-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: data.get('phone').trim(),
+          name: data.get('name').trim(),
+          call_date: data.get('call_date'),
+          content: data.get('content').trim(),
+        }),
+      });
+      const keepPhone = phoneInput.value;
+      const keepName = nameInput.value;
+      form.reset();
+      phoneInput.value = keepPhone;
+      nameInput.value = keepName;
+      form.elements.call_date.focus();
+      await loadCallLogs(keepPhone);
+      document.getElementById('call-log-search').value = keepPhone;
+    } catch (err) {
+      document.getElementById('call-log-error').innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
+    }
+  });
+
+  const searchInput = document.getElementById('call-log-search');
+  let debounce;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => loadCallLogs(searchInput.value.trim()), 300);
+  });
+
+  async function loadCallLogs(phone) {
+    const body = document.getElementById('call-log-body');
+    body.innerHTML = '불러오는 중...';
+    const logs = await api(`/api/call-logs${phone ? `?phone=${encodeURIComponent(phone)}` : ''}`);
+    body.innerHTML = logs.length
+      ? `<div class="table-scroll"><table>
+          <thead><tr><th>통화일자</th><th>전화번호</th><th>이름</th><th>업무내용</th><th>관리</th></tr></thead>
+          <tbody>${logs
+            .map(
+              (l) => `
+            <tr>
+              <td>${esc(l.call_date)}</td>
+              <td>${esc(l.phone)}</td>
+              <td>${esc(l.name) || '<span class="muted">-</span>'}</td>
+              <td>${esc(l.content)}</td>
+              <td><button class="danger" data-delete-call="${l.id}">삭제</button></td>
+            </tr>`
+            )
+            .join('')}</tbody>
+        </table></div>`
+      : '<div class="empty-state">등록된 통화내역이 없습니다.</div>';
+
+    body.querySelectorAll('[data-delete-call]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('이 통화내역을 삭제하시겠습니까?')) return;
+        await api(`/api/call-logs/${btn.dataset.deleteCall}`, { method: 'DELETE' });
+        await loadCallLogs(searchInput.value.trim());
+      });
+    });
+  }
+
+  await loadCallLogs(phoneFilter);
+}
+
 async function refreshCurrentView() {
   render();
 }
@@ -765,6 +925,7 @@ function render() {
   else if (state.view === 'companies') renderCompaniesView();
   else if (state.view === 'upload') renderUploadView();
   else if (state.view === 'inquiries') renderInquiriesView();
+  else if (state.view === 'calls') renderCallLogsView();
 }
 
 render();

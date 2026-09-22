@@ -93,6 +93,9 @@ function getCustomerFull(id) {
   customer.documents = db
     .prepare('SELECT * FROM customer_documents WHERE customer_id = ? ORDER BY uploaded_at DESC')
     .all(id);
+  customer.call_logs = db
+    .prepare('SELECT * FROM call_logs WHERE phone = ? ORDER BY call_date DESC, id DESC')
+    .all(customer.phone);
   return customer;
 }
 
@@ -417,6 +420,33 @@ app.delete('/api/work-logs/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM work_logs WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).end();
   db.prepare('DELETE FROM work_logs WHERE id = ?').run(req.params.id);
+  res.status(204).end();
+});
+
+// ---- 통화내역 (전화번호를 고객 분류번호로 사용) ----
+app.get('/api/call-logs', (req, res) => {
+  const { phone } = req.query;
+  const rows = phone
+    ? db.prepare('SELECT * FROM call_logs WHERE phone = ? ORDER BY call_date DESC, id DESC').all(phone)
+    : db.prepare('SELECT * FROM call_logs ORDER BY call_date DESC, id DESC').all();
+  res.json(rows);
+});
+
+app.post('/api/call-logs', (req, res) => {
+  const { phone, name, call_date, content } = req.body;
+  if (!phone || !call_date || !content) {
+    return res.status(400).json({ error: '전화번호, 통화일자, 업무내용은 필수입니다.' });
+  }
+  const info = db
+    .prepare('INSERT INTO call_logs (phone, name, call_date, content) VALUES (?, ?, ?, ?)')
+    .run(phone, name || null, call_date, content);
+  res.status(201).json(db.prepare('SELECT * FROM call_logs WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/call-logs/:id', (req, res) => {
+  const existing = db.prepare('SELECT id FROM call_logs WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).end();
+  db.prepare('DELETE FROM call_logs WHERE id = ?').run(req.params.id);
   res.status(204).end();
 });
 

@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS work_logs (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS call_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL,
+  name TEXT,
+  call_date TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_logs_phone ON call_logs(phone);
 `);
 
 // 기존 DB에 고객관리(사건) 컬럼이 없으면 추가
