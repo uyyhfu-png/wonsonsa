@@ -143,6 +143,74 @@ tr:hover td { background: #fafbfc; }
   border-top: 1px solid var(--border);
 }
 
+.mgmt-table td { vertical-align: top; }
+.mgmt-table .muted { font-size: 12px; }
+.mgmt-table .cell-name { min-width: 120px; }
+.mgmt-table .cell-wide { min-width: 160px; max-width: 260px; }
+.mgmt-table .cell-short { min-width: 80px; white-space: nowrap; }
+.mgmt-table .cell-docs { min-width: 120px; }
+main.wide { max-width: 1500px; }
+.mgmt-table .cell-num,
+.mgmt-table .cell-actions { white-space: nowrap; }
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.link-btn:hover { text-decoration: underline; }
+.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.doc-link {
+  display: block;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--primary);
+  text-decoration: none;
+}
+.doc-link:hover { text-decoration: underline; }
+.hospital-group + .hospital-group { margin-top: 6px; }
+
+.doc-list li.doc-item { display: block; }
+.doc-item-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.link-as-btn {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.link-as-btn:hover { background: #f0f1f3; }
+
+.doc-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.doc-group > summary { cursor: pointer; font-weight: 600; }
+.hospital-title { font-size: 14px; margin: 14px 0 4px; color: var(--primary); }
+.doc-upload-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.doc-move { margin-top: 6px; font-size: 13px; }
+.doc-move > summary { cursor: pointer; color: var(--text-muted); }
+.doc-move-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+
+.folder-table { margin-top: 10px; font-size: 13px; }
+.folder-table input[type="text"] { width: 100%; min-width: 140px; }
+
 .worklog-list { list-style: none; padding: 0; margin: 0; }
 .worklog-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .worklog-item:last-child { border-bottom: none; }

@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const express = require('express');
 const multer = require('multer');
@@ -9,7 +10,21 @@ const db = require('./db');
 const UPLOAD_DIR = path.join(__dirname, 'data', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const ALLOWED_EXT = ['.pdf', '.jpg', '.jpeg', '.png'];
+const OCR_EXT = ['.pdf', '.jpg', '.jpeg', '.png'];
+const UPLOAD_EXT = [
+  ...OCR_EXT, '.gif', '.bmp', '.tif', '.tiff', '.hwp', '.hwpx',
+  '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.zip',
+];
+const DOC_TYPES = ['증권', '병원', '기타'];
+
+function normalizeDocType(type) {
+  if (type === '진단서') return '병원';
+  return DOC_TYPES.includes(type) ? type : null;
+}
+
+function normalizeHospitalName(docType, name) {
+  return docType === '병원' ? String(name || '').trim() || null : null;
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -19,62 +34,81 @@ const upload = multer({
       cb(null, `${unique}${path.extname(file.originalname)}`);
     },
   }),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    cb(null, ALLOWED_EXT.includes(path.extname(file.originalname).toLowerCase()));
+    cb(null, UPLOAD_EXT.includes(path.extname(file.originalname).toLowerCase()));
   },
 });
 
-// 증권/진단서 자동 인식(OCR/PDF 텍스트 추출)용 - 디스크에 남기지 않고 메모리에서만 처리
+// 진단서 자동 인식(OCR/PDF 텍스트 추출)용 - 디스크에 남기지 않고 메모리에서만 처리
 const extractUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    cb(null, ALLOWED_EXT.includes(path.extname(file.originalname).toLowerCase()));
+    cb(null, OCR_EXT.includes(path.extname(file.originalname).toLowerCase()));
   },
 });
 
-function normalizeBirthDate(yyyy, mm, dd) {
-  const y = String(yyyy).padStart(4, '0');
-  const m = String(mm).padStart(2, '0');
-  const d = String(dd).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+// OCR 워커 풀: CPU 여유만큼(최대 3개) 워커를 만들어 재사용하고, 초과 요청은 대기열에서 순서대로 처리
+const OCR_POOL_SIZE = Math.max(1, Math.min(3, os.cpus().length - 1));
+const idleOcrWorkers = [];
+const ocrWaiters = [];
+let ocrWorkersCreated = 0;
 
-function extractFieldsFromText(text) {
-  const fields = {};
-
-  const nameMatch = text.match(/(?:성명|환자명|피보험자|이름)\s*[:：]?\s*([가-힣]{2,5})/);
-  if (nameMatch) fields.name = nameMatch[1];
-
-  const phoneMatch = text.match(/(01[0-9])[-.\s]?(\d{3,4})[-.\s]?(\d{4})/);
-  if (phoneMatch) fields.phone = `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}`;
-
-  const birthLabelMatch = text.match(/생년월일\s*[:：]?\s*(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-  const rrnMatch = text.match(/(\d{2})(\d{2})(\d{2})[-\s]?([1-4])\d{6}/);
-  const genericDateMatch = text.match(/\b(19|20)(\d{2})[-./](\d{1,2})[-./](\d{1,2})\b/);
-  if (birthLabelMatch) {
-    fields.birth_date = normalizeBirthDate(birthLabelMatch[1], birthLabelMatch[2], birthLabelMatch[3]);
-  } else if (rrnMatch) {
-    const genderDigit = Number(rrnMatch[4]);
-    const century = genderDigit <= 2 ? 1900 : genderDigit <= 4 ? 2000 : genderDigit <= 6 ? 1900 : 2000;
-    fields.birth_date = normalizeBirthDate(century + Number(rrnMatch[1]), rrnMatch[2], rrnMatch[3]);
-  } else if (genericDateMatch) {
-    fields.birth_date = normalizeBirthDate(
-      `${genericDateMatch[1]}${genericDateMatch[2]}`,
-      genericDateMatch[3],
-      genericDateMatch[4]
-    );
+async function acquireOcrWorker() {
+  if (idleOcrWorkers.length) return idleOcrWorkers.pop();
+  if (ocrWorkersCreated < OCR_POOL_SIZE) {
+    ocrWorkersCreated++;
+    try {
+      return await Tesseract.createWorker('kor+eng');
+    } catch (err) {
+      ocrWorkersCreated--;
+      throw err;
+    }
   }
-
-  const addressMatch = text.match(/주소\s*[:：]?\s*(.+)/);
-  if (addressMatch) fields.address = addressMatch[1].trim();
-
-  const diagnosisMatch = text.match(/(?:진단명|병명)\s*[:：]?\s*(.+)/);
-  if (diagnosisMatch) fields.diagnosis = diagnosisMatch[1].trim();
-
-  return fields;
+  return new Promise((resolve) => ocrWaiters.push(resolve));
 }
+
+function releaseOcrWorker(worker) {
+  const next = ocrWaiters.shift();
+  if (next) next(worker);
+  else idleOcrWorkers.push(worker);
+}
+
+async function ocrImage(buffer) {
+  const worker = await acquireOcrWorker();
+  try {
+    const { data } = await worker.recognize(buffer);
+    return data.text || '';
+  } finally {
+    releaseOcrWorker(worker);
+  }
+}
+
+// PDF는 텍스트 레이어를 먼저 읽고, 스캔본이면 첫 페이지를 이미지로 변환해 OCR
+async function extractText(buffer, ext) {
+  if (ext !== '.pdf') return ocrImage(buffer);
+
+  const parser = new PDFParse({ data: buffer });
+  try {
+    let text = (await parser.getText({ partial: [1] })).text || '';
+    if (text.replace(/\s|-- \d+ of \d+ --/g, '').length < 30) {
+      const shot = await parser.getScreenshot({ scale: 2, partial: [1] });
+      text = await ocrImage(Buffer.from(shot.pages[0].data));
+    }
+    return text;
+  } finally {
+    await parser.destroy();
+  }
+}
+
+// multer는 파일명을 latin1로 해석하므로 한글 파일명을 UTF-8로 복원
+function decodeUploadName(name) {
+  if ([...name].some((ch) => ch.charCodeAt(0) > 255)) return name;
+  return Buffer.from(name, 'latin1').toString('utf8');
+}
+
+const { extractFieldsFromText, findInsurers } = require('./extraction');
 
 const app = express();
 app.use(express.json());
@@ -138,40 +172,39 @@ app.get('/api/customers', (req, res) => {
     rows = rows.filter((c) => ids.has(c.id));
   }
 
-  if (q) {
-    const needle = q.toLowerCase();
-    rows = rows.filter((c) =>
-      [c.name, c.phone, c.address, c.diagnosis, c.birth_date, c.referrer, c.progress]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle))
-    );
-  }
+  const companiesStmt = db.prepare(
+    `SELECT ic.id, ic.name FROM insurance_companies ic
+     JOIN customer_insurance ci ON ci.insurance_company_id = ic.id
+     WHERE ci.customer_id = ?`
+  );
+  const documentsStmt = db.prepare(
+    'SELECT id, doc_type, hospital_name, file_name FROM customer_documents WHERE customer_id = ? ORDER BY id'
+  );
+  const latestCallStmt = db.prepare(
+    'SELECT call_date, content FROM call_logs WHERE phone = ? ORDER BY call_date DESC, id DESC LIMIT 1'
+  );
 
-  const withCompanies = rows.map((c) => ({
+  let result = rows.map((c) => ({
     ...c,
-    insurance_companies: db
-      .prepare(
-        `SELECT ic.id, ic.name FROM insurance_companies ic
-         JOIN customer_insurance ci ON ci.insurance_company_id = ic.id
-         WHERE ci.customer_id = ?`
-      )
-      .all(c.id),
+    insurance_companies: companiesStmt.all(c.id),
+    documents: documentsStmt.all(c.id),
+    latest_call: latestCallStmt.get(c.phone) || null,
   }));
 
   if (q) {
     const needle = q.toLowerCase();
-    res.json(
-      withCompanies.filter(
-        (c) =>
-          c.insurance_companies.some((ic) => ic.name.toLowerCase().includes(needle)) ||
-          [c.name, c.phone, c.address, c.diagnosis, c.birth_date, c.referrer, c.progress]
-            .filter(Boolean)
-            .some((v) => String(v).toLowerCase().includes(needle))
-      )
+    const needleDigits = needle.replace(/\D/g, '');
+    result = result.filter(
+      (c) =>
+        c.insurance_companies.some((ic) => ic.name.toLowerCase().includes(needle)) ||
+        [c.name, c.phone, c.address, c.diagnosis, c.birth_date, c.referrer, c.progress, c.case_title, c.case_type]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(needle)) ||
+        (needleDigits.length >= 3 && c.phone.replace(/\D/g, '').includes(needleDigits))
     );
-  } else {
-    res.json(withCompanies);
   }
+
+  res.json(result);
 });
 
 app.get('/api/customers/:id', (req, res) => {
@@ -186,8 +219,8 @@ app.post('/api/customers', (req, res) => {
     case_type, retained, receipt_number, success_fee_rate, status, manager, case_title,
     insurance_companies,
   } = req.body;
-  if (!name || !address || !phone || !birth_date) {
-    return res.status(400).json({ error: '고객이름, 주소, 연락처, 생년월일은 필수입니다.' });
+  if (!name || !phone) {
+    return res.status(400).json({ error: '고객이름과 연락처는 필수입니다.' });
   }
   const info = db
     .prepare(
@@ -197,7 +230,7 @@ app.post('/api/customers', (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      name, referrer || null, address, phone, birth_date, diagnosis || null, estimated_amount || null, progress || null,
+      name, referrer || null, address || '', phone, birth_date || '', diagnosis || null, estimated_amount || null, progress || null,
       case_type || null, retained || '수임', receipt_number || null, success_fee_rate || null, status || '진행', manager || null, case_title || null
     );
   setCustomerInsurance(info.lastInsertRowid, insurance_companies);
@@ -213,15 +246,15 @@ app.put('/api/customers/:id', (req, res) => {
     case_type, retained, receipt_number, success_fee_rate, status, manager, case_title,
     insurance_companies,
   } = req.body;
-  if (!name || !address || !phone || !birth_date) {
-    return res.status(400).json({ error: '고객이름, 주소, 연락처, 생년월일은 필수입니다.' });
+  if (!name || !phone) {
+    return res.status(400).json({ error: '고객이름과 연락처는 필수입니다.' });
   }
   db.prepare(
     `UPDATE customers SET name = ?, referrer = ?, address = ?, phone = ?, birth_date = ?, diagnosis = ?, estimated_amount = ?, progress = ?,
        case_type = ?, retained = ?, receipt_number = ?, success_fee_rate = ?, status = ?, manager = ?, case_title = ?, updated_at = datetime('now')
      WHERE id = ?`
   ).run(
-    name, referrer || null, address, phone, birth_date, diagnosis || null, estimated_amount || null, progress || null,
+    name, referrer || null, address || '', phone, birth_date || '', diagnosis || null, estimated_amount || null, progress || null,
     case_type || null, retained || '수임', receipt_number || null, success_fee_rate || null, status || '진행', manager || null, case_title || null,
     req.params.id
   );
@@ -251,45 +284,62 @@ app.delete('/api/customers/:id', (req, res) => {
   res.status(204).end();
 });
 
-// ---- Documents (증권/진단서) ----
+// ---- Documents (증권 / 병원(병원별) / 기타) ----
 app.post('/api/customers/:id/documents', upload.single('file'), (req, res) => {
   const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(req.params.id);
   if (!customer) {
     if (req.file) fs.rm(req.file.path, { force: true }, () => {});
     return res.status(404).json({ error: '고객을 찾을 수 없습니다.' });
   }
-  if (!req.file) return res.status(400).json({ error: '파일이 필요합니다 (PDF, JPG, PNG).' });
-  const { doc_type } = req.body;
-  if (!['증권', '진단서'].includes(doc_type)) {
+  if (!req.file) return res.status(400).json({ error: '지원하지 않는 파일 형식이거나 파일이 없습니다.' });
+  const docType = normalizeDocType(req.body.doc_type);
+  if (!docType) {
     fs.rm(req.file.path, { force: true }, () => {});
-    return res.status(400).json({ error: '파일 종류는 증권 또는 진단서여야 합니다.' });
+    return res.status(400).json({ error: '파일 종류는 증권, 병원, 기타 중 하나여야 합니다.' });
   }
   const info = db
     .prepare(
-      'INSERT INTO customer_documents (customer_id, doc_type, file_name, stored_name) VALUES (?, ?, ?, ?)'
+      'INSERT INTO customer_documents (customer_id, doc_type, hospital_name, file_name, stored_name) VALUES (?, ?, ?, ?, ?)'
     )
-    .run(req.params.id, doc_type, req.file.originalname, req.file.filename);
+    .run(
+      req.params.id,
+      docType,
+      normalizeHospitalName(docType, req.body.hospital_name),
+      decodeUploadName(req.file.originalname),
+      req.file.filename
+    );
   res.status(201).json(db.prepare('SELECT * FROM customer_documents WHERE id = ?').get(info.lastInsertRowid));
 });
 
-// 증권/진단서 파일에서 텍스트를 추출해 고객 정보 항목을 자동으로 추정
+// 서류 분류 변경 (예: 기타서류 -> 증권 또는 병원)
+app.put('/api/documents/:id', (req, res) => {
+  const doc = db.prepare('SELECT id FROM customer_documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: '서류를 찾을 수 없습니다.' });
+  const docType = normalizeDocType(req.body.doc_type);
+  if (!docType) return res.status(400).json({ error: '파일 종류는 증권, 병원, 기타 중 하나여야 합니다.' });
+  db.prepare('UPDATE customer_documents SET doc_type = ?, hospital_name = ? WHERE id = ?').run(
+    docType,
+    normalizeHospitalName(docType, req.body.hospital_name),
+    req.params.id
+  );
+  res.json(db.prepare('SELECT * FROM customer_documents WHERE id = ?').get(req.params.id));
+});
+
+// 진단서 파일에서 텍스트를 추출해 고객 정보 항목을 자동으로 추정
 app.post('/api/documents/extract', extractUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '파일이 필요합니다 (PDF, JPG, PNG).' });
 
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
-    let text = '';
 
-    if (ext === '.pdf') {
-      const parser = new PDFParse({ data: req.file.buffer });
-      const result = await parser.getText();
-      await parser.destroy();
-      text = result.text || '';
-    } else {
-      const { data } = await Tesseract.recognize(req.file.buffer, 'kor+eng');
-      text = data.text || '';
+    if (req.query.kind === 'policy') {
+      // 증권: 파일명에 보험회사가 있으면 OCR 없이 바로 확인, 없으면 본문에서 찾기
+      let insurers = findInsurers(decodeUploadName(req.file.originalname));
+      if (!insurers.length) insurers = findInsurers(await extractText(req.file.buffer, ext));
+      return res.json({ fields: { insurers } });
     }
 
+    const text = await extractText(req.file.buffer, ext);
     const fields = extractFieldsFromText(text);
     res.json({ text, fields });
   } catch (err) {
@@ -299,22 +349,23 @@ app.post('/api/documents/extract', extractUpload.single('file'), async (req, res
 
 // 파일 업로드 + 이름/전화번호/주소/생년월일로 기존 고객 매칭
 app.post('/api/documents/match', upload.single('file'), (req, res) => {
-  const { name, phone, address, birth_date, doc_type } = req.body;
-  if (!req.file) return res.status(400).json({ error: '파일이 필요합니다 (PDF, JPG, PNG).' });
-  if (!['증권', '진단서'].includes(doc_type)) {
+  const { name, phone } = req.body;
+  if (!req.file) return res.status(400).json({ error: '지원하지 않는 파일 형식이거나 파일이 없습니다.' });
+  const docType = normalizeDocType(req.body.doc_type);
+  if (!docType) {
     fs.rm(req.file.path, { force: true }, () => {});
-    return res.status(400).json({ error: '파일 종류는 증권 또는 진단서여야 합니다.' });
+    return res.status(400).json({ error: '파일 종류는 증권, 병원, 기타 중 하나여야 합니다.' });
   }
-  if (!name || !phone || !address || !birth_date) {
+  if (!name || !phone) {
     fs.rm(req.file.path, { force: true }, () => {});
-    return res.status(400).json({ error: '고객이름, 전화번호, 주소, 생년월일을 모두 입력해주세요.' });
+    return res.status(400).json({ error: '고객이름과 연락처를 입력해주세요.' });
   }
 
   const match = db
     .prepare(
-      `SELECT * FROM customers WHERE name = ? AND phone = ? AND address = ? AND birth_date = ?`
+      `SELECT * FROM customers WHERE name = ? AND phone = ?`
     )
-    .get(name, phone, address, birth_date);
+    .get(name, phone);
 
   if (!match) {
     fs.rm(req.file.path, { force: true }, () => {});
@@ -326,9 +377,15 @@ app.post('/api/documents/match', upload.single('file'), (req, res) => {
 
   const info = db
     .prepare(
-      'INSERT INTO customer_documents (customer_id, doc_type, file_name, stored_name) VALUES (?, ?, ?, ?)'
+      'INSERT INTO customer_documents (customer_id, doc_type, hospital_name, file_name, stored_name) VALUES (?, ?, ?, ?, ?)'
     )
-    .run(match.id, doc_type, req.file.originalname, req.file.filename);
+    .run(
+      match.id,
+      docType,
+      normalizeHospitalName(docType, req.body.hospital_name),
+      decodeUploadName(req.file.originalname),
+      req.file.filename
+    );
 
   res.status(201).json({
     matched: true,

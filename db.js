@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS customer_insurance (
 CREATE TABLE IF NOT EXISTS customer_documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  doc_type TEXT NOT NULL CHECK (doc_type IN ('증권', '진단서')),
+  doc_type TEXT NOT NULL CHECK (doc_type IN ('증권', '병원', '기타')),
+  hospital_name TEXT,
   file_name TEXT NOT NULL,
   stored_name TEXT NOT NULL,
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -88,6 +89,29 @@ for (const [column, type] of Object.entries(newCustomerColumns)) {
   if (!existingColumns.has(column)) {
     db.exec(`ALTER TABLE customers ADD COLUMN ${column} ${type}`);
   }
+}
+
+// 기존 DB(증권/진단서 구분)를 증권/병원/기타 구분 + 병원명 구조로 변환
+const documentsSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'customer_documents'").get().sql;
+if (documentsSql.includes("'진단서'")) {
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE customer_documents_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        doc_type TEXT NOT NULL CHECK (doc_type IN ('증권', '병원', '기타')),
+        hospital_name TEXT,
+        file_name TEXT NOT NULL,
+        stored_name TEXT NOT NULL,
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO customer_documents_new (id, customer_id, doc_type, file_name, stored_name, uploaded_at)
+        SELECT id, customer_id, CASE doc_type WHEN '진단서' THEN '병원' ELSE doc_type END, file_name, stored_name, uploaded_at
+        FROM customer_documents;
+      DROP TABLE customer_documents;
+      ALTER TABLE customer_documents_new RENAME TO customer_documents;
+    `);
+  })();
 }
 
 module.exports = db;
