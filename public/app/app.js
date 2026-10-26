@@ -862,15 +862,15 @@ function managementRow(c) {
 
   return `
     <tr>
-      <td class="cell-name"><button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button></td>
-      <td class="cell-num">${esc(c.phone)}</td>
-      <td class="cell-wide">${c.case_title ? `<div class="clamp">${esc(c.case_title)}</div>` : dash}</td>
-      <td class="cell-wide">${c.diagnosis ? esc(c.diagnosis) : dash}</td>
-      <td class="cell-docs">${hospitalDocCell(c)}</td>
-      <td class="cell-docs">${companies}${policyDocs}${addDocButton(c.id, '증권')}</td>
-      <td class="cell-docs">${otherDocs}${addDocButton(c.id, '기타')}</td>
-      <td class="cell-num">${formatKRW(c.estimated_amount)}</td>
-      <td class="cell-wide">${c.progress ? `<div class="clamp">${esc(c.progress)}</div>` : dash}</td>
+      <td class="cell-name" data-label="이름"><div class="cell-body"><button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button></div></td>
+      <td class="cell-num" data-label="연락처"><div class="cell-body"><a class="phone-link" href="tel:${esc(c.phone)}">${esc(c.phone)}</a></div></td>
+      <td class="cell-wide" data-label="청구내용"><div class="cell-body">${c.case_title ? `<div class="clamp">${esc(c.case_title)}</div>` : dash}</div></td>
+      <td class="cell-wide" data-label="진단명"><div class="cell-body">${c.diagnosis ? esc(c.diagnosis) : dash}</div></td>
+      <td class="cell-docs" data-label="병원서류"><div class="cell-body">${hospitalDocCell(c)}</div></td>
+      <td class="cell-docs" data-label="증권"><div class="cell-body">${companies}${policyDocs}${addDocButton(c.id, '증권')}</div></td>
+      <td class="cell-docs" data-label="기타서류"><div class="cell-body">${otherDocs}${addDocButton(c.id, '기타')}</div></td>
+      <td class="cell-num" data-label="추산금액"><div class="cell-body">${formatKRW(c.estimated_amount)}</div></td>
+      <td class="cell-wide" data-label="진행사항"><div class="cell-body">${c.progress ? `<div class="clamp">${esc(c.progress)}</div>` : dash}</div></td>
       <td class="cell-actions">
         <button class="secondary" data-edit="${c.id}">수정</button>
         <button class="danger" data-delete="${c.id}">삭제</button>

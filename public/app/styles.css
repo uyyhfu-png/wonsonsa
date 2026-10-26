@@ -297,3 +297,51 @@ textarea {
 }
 .banner.error { background: #fdeceb; color: var(--danger); }
 .banner.success { background: #e9f7ee; color: #1c7c42; }
+
+.phone-link { color: inherit; text-decoration: none; }
+
+/* ---- 휴대폰 화면: 표를 고객별 카드로 표시 ---- */
+@media (max-width: 768px) {
+  main, main.wide { padding: 12px; max-width: none; }
+  .topbar { padding: 10px 12px; gap: 8px 12px; }
+  .tabs { flex-wrap: wrap; }
+  .tab-btn { padding: 7px 10px; font-size: 13px; }
+  .card { padding: 14px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .dialog { padding: 16px; }
+  .overlay { padding: 8px; }
+
+  .mgmt-table, .mgmt-table tbody, .mgmt-table tr, .mgmt-table td { display: block; width: 100%; }
+  .mgmt-table thead { display: none; }
+  .mgmt-table tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    background: #fff;
+  }
+  .mgmt-table td {
+    display: flex;
+    gap: 10px;
+    border: none;
+    padding: 6px 0;
+    min-width: 0;
+    max-width: none;
+  }
+  .mgmt-table tr:hover td { background: transparent; }
+  .mgmt-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 64px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding-top: 2px;
+  }
+  .mgmt-table .cell-body { flex: 1; min-width: 0; }
+  .mgmt-table .cell-name .link-btn { font-size: 16px; }
+  .mgmt-table .cell-actions { justify-content: flex-end; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; }
+  .doc-link { max-width: none; }
+  .add-doc-btn { padding: 6px 12px; font-size: 13px; }
+  .doc-x { padding: 6px 10px; font-size: 18px; }
+  .doc-move-select { font-size: 13px; padding: 4px; }
+}
