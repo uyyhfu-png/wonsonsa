@@ -145,8 +145,8 @@ tr:hover td { background: #fafbfc; }
 
 .mgmt-table td { vertical-align: top; }
 .mgmt-table .muted { font-size: 12px; }
-.mgmt-table .cell-name { min-width: 120px; }
-.mgmt-table .cell-wide { min-width: 160px; max-width: 260px; }
+.mgmt-table .cell-name { min-width: 90px; }
+.mgmt-table .cell-wide { min-width: 150px; max-width: 260px; }
 .mgmt-table .cell-short { min-width: 80px; white-space: nowrap; }
 .mgmt-table .cell-docs { min-width: 120px; }
 main.wide { max-width: 1500px; }
@@ -181,6 +181,28 @@ main.wide { max-width: 1500px; }
 }
 .doc-link:hover { text-decoration: underline; }
 .hospital-group + .hospital-group { margin-top: 6px; }
+
+.add-doc-btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--primary);
+  border: 1px dashed var(--primary);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.add-doc-btn:hover { background: #eef3ff; }
+.hospital-name { display: flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--primary); }
+.hospital-group { padding-bottom: 6px; }
+.hospital-group + .hospital-group { border-top: 1px solid var(--border); padding-top: 6px; }
+.doc-row { display: flex; align-items: center; gap: 4px; }
+.doc-row .doc-link { flex: 1 1 auto; min-width: 0; }
+.doc-x { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 14px; }
+.doc-x:hover { color: var(--danger); }
+.doc-move-select { font-size: 11px; padding: 1px 2px; }
+#mgmt-banner .banner { margin-bottom: 10px; }
 
 .doc-list li.doc-item { display: block; }
 .doc-item-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

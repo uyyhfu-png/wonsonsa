@@ -311,6 +311,17 @@ app.post('/api/customers/:id/documents', upload.single('file'), (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM customer_documents WHERE id = ?').get(info.lastInsertRowid));
 });
 
+// 병원 이름 바꾸기 (예: 제1병원 -> 서울대병원): 해당 고객의 같은 병원 서류를 한꺼번에 변경
+app.put('/api/customers/:id/hospital-name', (req, res) => {
+  const from = String(req.body.from || '').trim();
+  const to = String(req.body.to || '').trim();
+  if (!to) return res.status(400).json({ error: '병원 이름을 입력해주세요.' });
+  db.prepare(
+    "UPDATE customer_documents SET hospital_name = ? WHERE customer_id = ? AND doc_type = '병원' AND IFNULL(hospital_name, '') = ?"
+  ).run(to, req.params.id, from);
+  res.json({ ok: true });
+});
+
 // 서류 분류 변경 (예: 기타서류 -> 증권 또는 병원)
 app.put('/api/documents/:id', (req, res) => {
   const doc = db.prepare('SELECT id FROM customer_documents WHERE id = ?').get(req.params.id);

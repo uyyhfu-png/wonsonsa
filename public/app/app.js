@@ -9,6 +9,7 @@ const state = {
   customerSearch: '',
   mgmtSearch: '',
   openDocGroups: new Set(),
+  hospitalSlots: {},
 };
 
 function formatKRW(value) {
@@ -71,7 +72,7 @@ function customerFormFields(customer = {}, folderHtml = null) {
       <label class="full">진단명
         <input type="text" name="diagnosis" value="${esc(customer.diagnosis)}" placeholder="예: 고혈압, 당뇨" />
       </label>
-      <label class="full">사건내용 (요약)
+      <label class="full">청구내용 (요약)
         <input type="text" name="case_title" value="${esc(customer.case_title)}" placeholder="예: 대장 용종 제거 후 고등급 선종 진단, 유사암진단비 청구" />
       </label>
       <label class="full">가입 보험회사 (콤마로 구분, 여러 곳 가능)
@@ -496,10 +497,10 @@ function customerDetailBody(customer) {
         : '<span class="muted">없음</span>'
     }</p>
 
-    <h3>진행방향</h3>
+    <h3>진행사항</h3>
     <textarea data-progress-input rows="4" placeholder="예: 2026-09-09 서류 접수 완료, 보험사 심사 진행중">${esc(customer.progress)}</textarea>
     <div class="actions-row" style="margin-top:8px;">
-      <button type="button" class="primary" data-action="save-progress">진행방향 저장</button>
+      <button type="button" class="primary" data-action="save-progress">진행사항 저장</button>
     </div>
     <div data-progress-banner></div>
 
@@ -686,7 +687,7 @@ function bindCustomerDetailEvents(root, customer, hooks) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ progress: value }),
       });
-      banner.innerHTML = `<div class="banner success">진행방향이 저장되었습니다.</div>`;
+      banner.innerHTML = `<div class="banner success">진행사항이 저장되었습니다.</div>`;
     } catch (err) {
       banner.innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
     }
@@ -779,59 +780,186 @@ function bindTableActions(customers) {
   );
 }
 
-function docLinkHtml(d) {
-  return `<a class="doc-link" href="/api/documents/${d.id}/file" target="_blank" title="${esc(d.file_name)}">${esc(d.file_name)}</a>`;
+// ---- 고객관리 표: 서류 칸에서 바로 PDF 추가 (병원은 제1병원, 제2병원 … 칸별로) ----
+const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png';
+const UNASSIGNED_HOSPITAL = '병원 미지정';
+
+function docRowHtml(d, moveOptionsHtml = '') {
+  return `
+    <div class="doc-row">
+      <a class="doc-link" href="/api/documents/${d.id}/file" target="_blank" title="${esc(d.file_name)}">${esc(d.file_name)}</a>
+      <button type="button" class="doc-x" data-del-doc="${d.id}" title="삭제">×</button>
+      ${
+        moveOptionsHtml
+          ? `<select class="doc-move-select" data-quick-move="${d.id}" title="증권 또는 병원서류로 옮기기">${moveOptionsHtml}</select>`
+          : ''
+      }
+    </div>`;
 }
 
-function docLinks(documents, docType) {
-  return (documents || []).filter((d) => d.doc_type === docType).map(docLinkHtml).join('');
+function addDocButton(customerId, docType, hospital = '') {
+  return `<label class="add-doc-btn">+ PDF 추가<input type="file" hidden multiple accept="${DOC_ACCEPT}" data-add-doc="${customerId}" data-doc-type="${docType}" data-hospital="${esc(hospital)}" /></label>`;
 }
 
-function hospitalDocLinks(documents) {
-  const groups = new Map();
-  for (const d of (documents || []).filter((doc) => doc.doc_type === '병원')) {
-    const key = d.hospital_name || '병원 미지정';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(d);
+// 서류가 있는 병원 + 비어 있는 제N병원 칸(처음엔 제1·제2병원, 항상 여분 1칸)을 번호순으로 반환
+function hospitalSlots(c) {
+  const docs = (c.documents || []).filter((d) => d.doc_type === '병원');
+  const groups = [];
+  for (const d of docs) {
+    const name = d.hospital_name || UNASSIGNED_HOSPITAL;
+    if (!groups.includes(name)) groups.push(name);
   }
-  return [...groups]
-    .map(([hospital, docs]) => `<div class="hospital-group"><div class="muted">${esc(hospital)}</div>${docs.map(docLinkHtml).join('')}</div>`)
+  const namedCount = groups.filter((n) => n !== UNASSIGNED_HOSPITAL).length;
+  let empties = Math.max(1, 2 - namedCount) + (state.hospitalSlots[c.id] || 0);
+  const slots = [...groups];
+  for (let i = 1; empties > 0; i++) {
+    const name = `제${i}병원`;
+    if (!slots.includes(name)) {
+      slots.push(name);
+      empties--;
+    }
+  }
+  const order = (name) => {
+    const m = name.match(/^제(\d+)병원$/);
+    if (name === UNASSIGNED_HOSPITAL) return 1e6;
+    return m ? Number(m[1]) : 1000 + groups.indexOf(name);
+  };
+  return slots.sort((a, b) => order(a) - order(b));
+}
+
+function hospitalDocCell(c) {
+  const docs = (c.documents || []).filter((d) => d.doc_type === '병원');
+  const html = hospitalSlots(c)
+    .map((name) => {
+      const items = docs.filter((d) => (d.hospital_name || UNASSIGNED_HOSPITAL) === name);
+      const unassigned = name === UNASSIGNED_HOSPITAL;
+      return `
+        <div class="hospital-group">
+          <div class="hospital-name">
+            <span>${esc(name)}</span>
+            ${items.length ? `<button type="button" class="doc-x" data-rename-hospital="${c.id}" data-from="${unassigned ? '' : esc(name)}" title="병원 이름 바꾸기">✎</button>` : ''}
+          </div>
+          ${items.map((d) => docRowHtml(d)).join('')}
+          ${unassigned ? '' : addDocButton(c.id, '병원', name)}
+        </div>`;
+    })
     .join('');
+  return `${html}<button type="button" class="add-doc-btn" data-add-hospital="${c.id}">+ 병원 칸 추가</button>`;
 }
 
 function managementRow(c) {
   const dash = '<span class="muted">-</span>';
+  const docs = c.documents || [];
   const companies = c.insurance_companies.map((ic) => `<span class="tag">${esc(ic.name)}</span>`).join('');
-  const policyDocs = docLinks(c.documents, '증권');
-  const hospitalDocs = hospitalDocLinks(c.documents);
-  const otherCount = (c.documents || []).filter((d) => d.doc_type === '기타').length;
-  const caseContent =
-    (c.case_title ? `<strong>${esc(c.case_title)}</strong>` : '') +
-    (c.diagnosis ? `<div class="muted">${esc(c.diagnosis)}</div>` : '');
+  const policyDocs = docs.filter((d) => d.doc_type === '증권').map((d) => docRowHtml(d)).join('');
+  const moveOptions =
+    '<option value="">이동</option><option value="증권">증권</option>' +
+    hospitalSlots(c)
+      .filter((name) => name !== UNASSIGNED_HOSPITAL)
+      .map((name) => `<option value="병원:${esc(name)}">${esc(name)}</option>`)
+      .join('');
+  const otherDocs = docs.filter((d) => d.doc_type === '기타').map((d) => docRowHtml(d, moveOptions)).join('');
 
   return `
     <tr>
-      <td class="cell-name">
-        <button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button>
-        <div class="muted">${esc(c.phone)}</div>
-        ${otherCount ? `<span class="tag tag-muted" title="증권·병원으로 분류되지 않은 서류입니다">기타서류 ${otherCount}건 확인필요</span>` : ''}
-      </td>
-      <td class="cell-wide">${caseContent || dash}</td>
-      <td class="cell-short">${esc(c.case_type) || dash}</td>
-      <td class="cell-docs">${companies + policyDocs || dash}</td>
+      <td class="cell-name"><button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button></td>
+      <td class="cell-num">${esc(c.phone)}</td>
+      <td class="cell-wide">${c.case_title ? `<div class="clamp">${esc(c.case_title)}</div>` : dash}</td>
+      <td class="cell-wide">${c.diagnosis ? esc(c.diagnosis) : dash}</td>
+      <td class="cell-docs">${hospitalDocCell(c)}</td>
+      <td class="cell-docs">${companies}${policyDocs}${addDocButton(c.id, '증권')}</td>
+      <td class="cell-docs">${otherDocs}${addDocButton(c.id, '기타')}</td>
       <td class="cell-num">${formatKRW(c.estimated_amount)}</td>
-      <td class="cell-wide">${
-        c.latest_call
-          ? `<div class="muted">${esc(c.latest_call.call_date)}</div><div class="clamp">${esc(c.latest_call.content)}</div>`
-          : dash
-      }</td>
       <td class="cell-wide">${c.progress ? `<div class="clamp">${esc(c.progress)}</div>` : dash}</td>
-      <td class="cell-docs">${hospitalDocs || dash}</td>
       <td class="cell-actions">
         <button class="secondary" data-edit="${c.id}">수정</button>
         <button class="danger" data-delete="${c.id}">삭제</button>
       </td>
     </tr>`;
+}
+
+function bindManagementDocActions(root, customers, reload) {
+  const byId = new Map(customers.map((c) => [String(c.id), c]));
+  const banner = () => document.getElementById('mgmt-banner');
+
+  root.querySelectorAll('[data-add-doc]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const customer = byId.get(input.dataset.addDoc);
+      const docType = input.dataset.docType;
+      const hospital = input.dataset.hospital || '';
+      const label = docType === '기타' ? '기타서류' : docType === '병원' ? hospital : '증권';
+      const files = [...input.files];
+      if (!files.length) return;
+
+      const failed = [];
+      for (let i = 0; i < files.length; i++) {
+        banner().innerHTML = `<div class="banner success">${esc(customer.name)}님 ${esc(label)} 등록 중... (${i + 1}/${files.length}) ${esc(files[i].name)}</div>`;
+        const fd = new FormData();
+        fd.append('file', files[i]);
+        fd.append('doc_type', docType);
+        fd.append('hospital_name', docType === '병원' ? hospital : '');
+        try {
+          await api(`/api/customers/${customer.id}/documents`, { method: 'POST', body: fd });
+        } catch (err) {
+          failed.push(`${files[i].name} (${err.message})`);
+        }
+      }
+      banner().innerHTML = failed.length
+        ? `<div class="banner error">등록하지 못한 파일: ${esc(failed.join(', '))}</div>`
+        : `<div class="banner success">${esc(customer.name)}님 ${esc(label)} ${files.length}개를 등록했습니다.</div>`;
+      await reload();
+    });
+  });
+
+  root.querySelectorAll('[data-add-hospital]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.addHospital;
+      state.hospitalSlots[id] = (state.hospitalSlots[id] || 0) + 1;
+      await reload();
+    });
+  });
+
+  root.querySelectorAll('[data-rename-hospital]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const from = btn.dataset.from;
+      const to = (prompt('병원 이름을 입력하세요 (예: 서울대병원)', from) || '').trim();
+      if (!to || to === from) return;
+      try {
+        await api(`/api/customers/${btn.dataset.renameHospital}/hospital-name`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from, to }),
+        });
+      } catch (err) {
+        alert(err.message);
+      }
+      await reload();
+    });
+  });
+
+  root.querySelectorAll('[data-del-doc]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('이 서류를 삭제하시겠습니까?')) return;
+      await api(`/api/documents/${btn.dataset.delDoc}`, { method: 'DELETE' });
+      await reload();
+    });
+  });
+
+  root.querySelectorAll('[data-quick-move]').forEach((select) => {
+    select.addEventListener('change', async () => {
+      if (!select.value) return;
+      const isHospital = select.value.startsWith('병원:');
+      await api(`/api/documents/${select.dataset.quickMove}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doc_type: isHospital ? '병원' : select.value,
+          hospital_name: isHospital ? select.value.slice('병원:'.length) : '',
+        }),
+      });
+      await reload();
+    });
+  });
 }
 
 // ---- 고객 목록: 이름별 탭 + 상세 패널 ----
@@ -1067,10 +1195,11 @@ async function renderManagementView() {
   app.innerHTML = `
     <div class="card">
       <div class="toolbar">
-        <input type="text" id="mgmt-search-input" placeholder="이름 또는 전화번호로 조회" value="${esc(state.mgmtSearch)}" style="flex:1;min-width:200px;" />
+        <input type="text" id="mgmt-search-input" placeholder="이름으로 조회 (연락처로도 찾을 수 있어요)" value="${esc(state.mgmtSearch)}" style="flex:1;min-width:200px;" />
         <button class="primary" id="mgmt-add-btn">+ 고객 추가</button>
       </div>
       <div id="mgmt-count" class="muted" style="margin-bottom:8px;"></div>
+      <div id="mgmt-banner"></div>
       <div id="mgmt-body">불러오는 중...</div>
     </div>
 
@@ -1128,16 +1257,21 @@ async function renderManagementView() {
 
   async function loadManagementTable() {
     const body = document.getElementById('mgmt-body');
+    const previousScroll = document.querySelector('#mgmt-body .table-scroll');
+    const scrollLeft = previousScroll ? previousScroll.scrollLeft : 0;
     const q = state.mgmtSearch.trim();
     const customers = await api(`/api/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`);
     document.getElementById('mgmt-count').textContent = `총 ${customers.length}명`;
     body.innerHTML = customers.length
       ? `<div class="table-scroll"><table class="mgmt-table">
-          <thead><tr><th>이름</th><th>사건내용</th><th>사고종류</th><th>증권</th><th>추산금액</th><th>최근상담</th><th>진행방향</th><th>병원서류</th><th>작업</th></tr></thead>
+          <thead><tr><th>이름</th><th>연락처</th><th>청구내용</th><th>진단명</th><th>병원서류</th><th>증권</th><th>기타서류</th><th>추산금액</th><th>진행사항</th><th>작업</th></tr></thead>
           <tbody>${customers.map(managementRow).join('')}</tbody>
         </table></div>`
       : '<div class="empty-state">조회된 고객이 없습니다.</div>';
+    const scroller = body.querySelector('.table-scroll');
+    if (scroller) scroller.scrollLeft = scrollLeft;
     bindTableActions(customers);
+    bindManagementDocActions(body, customers, loadManagementTable);
   }
 
   await Promise.all([loadManagementTable(), loadWorkLogs()]);
