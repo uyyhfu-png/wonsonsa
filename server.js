@@ -127,6 +127,9 @@ function getCustomerFull(id) {
   customer.documents = db
     .prepare('SELECT * FROM customer_documents WHERE customer_id = ? ORDER BY uploaded_at DESC')
     .all(id);
+  customer.progress_logs = db
+    .prepare('SELECT * FROM progress_logs WHERE customer_id = ? ORDER BY log_date DESC, id DESC')
+    .all(id);
   customer.call_logs = db
     .prepare('SELECT * FROM call_logs WHERE phone = ? ORDER BY call_date DESC, id DESC')
     .all(customer.phone);
@@ -160,7 +163,7 @@ app.get('/api/insurance-companies', (req, res) => {
 // ---- Customers ----
 app.get('/api/customers', (req, res) => {
   const { q, insurance_company_id } = req.query;
-  let rows = db.prepare('SELECT * FROM customers ORDER BY updated_at DESC').all();
+  let rows = db.prepare('SELECT * FROM customers ORDER BY updated_at DESC, id ASC').all();
 
   if (insurance_company_id) {
     const ids = new Set(
@@ -180,6 +183,9 @@ app.get('/api/customers', (req, res) => {
   const documentsStmt = db.prepare(
     'SELECT id, doc_type, hospital_name, file_name FROM customer_documents WHERE customer_id = ? ORDER BY id'
   );
+  const progressLogsStmt = db.prepare(
+    'SELECT id, log_date, content FROM progress_logs WHERE customer_id = ? ORDER BY log_date DESC, id DESC'
+  );
   const latestCallStmt = db.prepare(
     'SELECT call_date, content FROM call_logs WHERE phone = ? ORDER BY call_date DESC, id DESC LIMIT 1'
   );
@@ -189,6 +195,7 @@ app.get('/api/customers', (req, res) => {
     insurance_companies: companiesStmt.all(c.id),
     documents: documentsStmt.all(c.id),
     latest_call: latestCallStmt.get(c.phone) || null,
+    progress_logs: progressLogsStmt.all(c.id),
   }));
 
   if (q) {
@@ -197,9 +204,10 @@ app.get('/api/customers', (req, res) => {
     result = result.filter(
       (c) =>
         c.insurance_companies.some((ic) => ic.name.toLowerCase().includes(needle)) ||
-        [c.name, c.phone, c.address, c.diagnosis, c.birth_date, c.referrer, c.progress, c.case_title, c.case_type]
+        [c.name, c.phone, c.address, c.diagnosis, c.birth_date, c.referrer, c.case_title, c.case_type]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(needle)) ||
+        c.progress_logs.some((l) => l.content.toLowerCase().includes(needle)) ||
         (needleDigits.length >= 3 && c.phone.replace(/\D/g, '').includes(needleDigits))
     );
   }
@@ -262,15 +270,42 @@ app.put('/api/customers/:id', (req, res) => {
   res.json(getCustomerFull(req.params.id));
 });
 
-app.put('/api/customers/:id/progress', (req, res) => {
-  const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: '고객을 찾을 수 없습니다.' });
-  const { progress } = req.body;
-  db.prepare(`UPDATE customers SET progress = ?, updated_at = datetime('now') WHERE id = ?`).run(
-    progress || null,
-    req.params.id
-  );
-  res.json(getCustomerFull(req.params.id));
+// ---- 진행사항 (날짜별) ----
+const LOG_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+app.post('/api/customers/:id/progress-logs', (req, res) => {
+  const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(req.params.id);
+  if (!customer) return res.status(404).json({ error: '고객을 찾을 수 없습니다.' });
+  const logDate = String(req.body.log_date || '').trim();
+  const content = String(req.body.content || '').trim();
+  if (!LOG_DATE_RE.test(logDate) || !content) {
+    return res.status(400).json({ error: '날짜와 진행사항 내용을 입력해주세요.' });
+  }
+  const info = db
+    .prepare('INSERT INTO progress_logs (customer_id, log_date, content) VALUES (?, ?, ?)')
+    .run(req.params.id, logDate, content);
+  db.prepare("UPDATE customers SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
+  res.status(201).json(db.prepare('SELECT * FROM progress_logs WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/progress-logs/:id', (req, res) => {
+  const log = db.prepare('SELECT * FROM progress_logs WHERE id = ?').get(req.params.id);
+  if (!log) return res.status(404).json({ error: '진행사항을 찾을 수 없습니다.' });
+  const logDate = String(req.body.log_date || log.log_date).trim();
+  const content = String(req.body.content ?? log.content).trim();
+  if (!LOG_DATE_RE.test(logDate) || !content) {
+    return res.status(400).json({ error: '날짜와 진행사항 내용을 입력해주세요.' });
+  }
+  db.prepare('UPDATE progress_logs SET log_date = ?, content = ? WHERE id = ?').run(logDate, content, req.params.id);
+  db.prepare("UPDATE customers SET updated_at = datetime('now') WHERE id = ?").run(log.customer_id);
+  res.json(db.prepare('SELECT * FROM progress_logs WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/progress-logs/:id', (req, res) => {
+  const log = db.prepare('SELECT id FROM progress_logs WHERE id = ?').get(req.params.id);
+  if (!log) return res.status(404).end();
+  db.prepare('DELETE FROM progress_logs WHERE id = ?').run(req.params.id);
+  res.status(204).end();
 });
 
 app.delete('/api/customers/:id', (req, res) => {
@@ -427,7 +462,7 @@ app.post('/api/case-lookup', (req, res) => {
   }
   const match = db
     .prepare(
-      `SELECT name, progress, created_at, updated_at FROM customers
+      `SELECT id, name, created_at, updated_at FROM customers
        WHERE name = ? AND substr(replace(replace(phone, '-', ''), ' ', ''), -4) = ?`
     )
     .get(name, phone_last4);
@@ -435,10 +470,14 @@ app.post('/api/case-lookup', (req, res) => {
   if (!match) {
     return res.status(404).json({ found: false, error: '일치하는 사건을 찾을 수 없습니다. 상담센터로 문의해주세요.' });
   }
+  const logs = db
+    .prepare('SELECT log_date, content FROM progress_logs WHERE customer_id = ? ORDER BY log_date DESC, id DESC LIMIT 5')
+    .all(match.id);
   res.json({
     found: true,
     name: match.name,
-    progress: match.progress,
+    progress: logs.length ? logs[0].content : null,
+    progress_logs: logs,
     created_at: match.created_at,
     updated_at: match.updated_at,
   });

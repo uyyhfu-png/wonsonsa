@@ -480,6 +480,129 @@ async function deleteCustomer(id) {
 }
 
 // ---- Shared customer detail content (used by modal and by name-tab panel) ----
+// ---- 진행사항 (날짜별 입력) ----
+function todayStr() {
+  return new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function progressLogsHtml(customer) {
+  const logs = customer.progress_logs || [];
+  return `
+    <h3>진행사항 <span class="muted" style="font-weight:400;font-size:12px;">(날짜별)</span></h3>
+    ${
+      logs.length
+        ? `<ul class="progress-log-list">${logs
+            .map(
+              (l) => `
+          <li class="progress-log-item">
+            <div class="progress-log-head">
+              <strong>${esc(l.log_date)}</strong>
+              <span>
+                <button type="button" class="doc-x" data-edit-progress="${l.id}" data-content="${esc(l.content)}" title="수정">✎</button>
+                <button type="button" class="doc-x" data-del-progress="${l.id}" title="삭제">×</button>
+              </span>
+            </div>
+            <div class="progress-log-content">${esc(l.content)}</div>
+          </li>`
+            )
+            .join('')}</ul>`
+        : '<p class="muted">등록된 진행사항이 없습니다.</p>'
+    }
+    <form data-progress-form class="progress-form">
+      <input type="date" name="log_date" value="${todayStr()}" required />
+      <input type="text" name="content" placeholder="진행사항을 입력하세요 (예: 서류 접수 완료)" required />
+      <button type="submit" class="primary">추가</button>
+    </form>
+    <div data-progress-banner></div>
+  `;
+}
+
+function bindProgressEvents(root, customer, hooks) {
+  const banner = root.querySelector('[data-progress-banner]');
+
+  root.querySelector('[data-progress-form]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    try {
+      await api(`/api/customers/${customer.id}/progress-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ log_date: form.get('log_date'), content: form.get('content').trim() }),
+      });
+      hooks.onChanged();
+    } catch (err) {
+      banner.innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
+    }
+  });
+
+  root.querySelectorAll('[data-del-progress]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('이 진행사항을 삭제하시겠습니까?')) return;
+      await api(`/api/progress-logs/${btn.dataset.delProgress}`, { method: 'DELETE' });
+      hooks.onChanged();
+    });
+  });
+
+  root.querySelectorAll('[data-edit-progress]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const content = (prompt('진행사항 내용을 수정하세요', btn.dataset.content) || '').trim();
+      if (!content || content === btn.dataset.content) return;
+      try {
+        await api(`/api/progress-logs/${btn.dataset.editProgress}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        });
+        hooks.onChanged();
+      } catch (err) {
+        banner.innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
+      }
+    });
+  });
+}
+
+// 고객관리 표의 진행사항 칸: 최근 3건 + 날짜와 함께 바로 추가
+function progressCell(c) {
+  const logs = c.progress_logs || [];
+  const shown = logs
+    .slice(0, 3)
+    .map((l) => `<div class="progress-item"><span class="progress-date">${esc(l.log_date)}</span><div class="clamp">${esc(l.content)}</div></div>`)
+    .join('');
+  const more = logs.length > 3 ? `<div class="muted">외 ${logs.length - 3}건 (이름을 누르면 전체 보기)</div>` : '';
+  return `<td class="cell-wide cell-progress" data-label="진행사항"><div class="cell-body">${shown}${more}<button type="button" class="add-doc-btn" data-add-progress="${c.id}">+ 진행사항 추가</button></div></td>`;
+}
+
+function bindManagementProgressActions(root, reload) {
+  root.querySelectorAll('[data-add-progress]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const body = btn.parentElement;
+      const existing = body.querySelector('form.progress-form');
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      const form = document.createElement('form');
+      form.className = 'progress-form';
+      form.innerHTML = `<input type="date" name="log_date" value="${todayStr()}" required /><input type="text" name="content" placeholder="진행사항 입력" required /><button type="submit" class="primary">저장</button>`;
+      btn.before(form);
+      form.elements.content.focus();
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/customers/${btn.dataset.addProgress}/progress-logs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ log_date: form.elements.log_date.value, content: form.elements.content.value.trim() }),
+          });
+          await reload();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    });
+  });
+}
+
 function customerDetailBody(customer) {
   return `
     <div class="detail-actions-row">
@@ -497,12 +620,7 @@ function customerDetailBody(customer) {
         : '<span class="muted">없음</span>'
     }</p>
 
-    <h3>진행사항</h3>
-    <textarea data-progress-input rows="4" placeholder="예: 2026-09-09 서류 접수 완료, 보험사 심사 진행중">${esc(customer.progress)}</textarea>
-    <div class="actions-row" style="margin-top:8px;">
-      <button type="button" class="primary" data-action="save-progress">진행사항 저장</button>
-    </div>
-    <div data-progress-banner></div>
+    ${progressLogsHtml(customer)}
 
     ${documentsSectionHtml(customer)}
     <div data-doc-error></div>
@@ -678,20 +796,7 @@ function bindCustomerDetailEvents(root, customer, hooks) {
     if (deleted) hooks.onDeleted();
   });
 
-  root.querySelector('[data-action="save-progress"]').addEventListener('click', async () => {
-    const value = root.querySelector('[data-progress-input]').value;
-    const banner = root.querySelector('[data-progress-banner]');
-    try {
-      await api(`/api/customers/${id}/progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ progress: value }),
-      });
-      banner.innerHTML = `<div class="banner success">진행사항이 저장되었습니다.</div>`;
-    } catch (err) {
-      banner.innerHTML = `<div class="banner error">${esc(err.message)}</div>`;
-    }
-  });
+  bindProgressEvents(root, customer, hooks);
 
   bindDocumentEvents(root, customer, hooks);
 
@@ -862,7 +967,9 @@ function managementRow(c) {
 
   return `
     <tr>
-      <td class="cell-name" data-label="이름"><div class="cell-body"><button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button></div></td>
+      <td class="cell-name" data-label="이름"><div class="cell-body"><button type="button" class="link-btn" data-detail="${c.id}">${esc(c.name)}</button>${
+        (c.progress_logs || [])[0] ? ` <span class="name-date" title="마지막 진행사항 날짜">${esc(c.progress_logs[0].log_date)}</span>` : ''
+      }</div></td>
       <td class="cell-num" data-label="연락처"><div class="cell-body"><a class="phone-link" href="tel:${esc(c.phone)}">${esc(c.phone)}</a></div></td>
       <td class="cell-wide" data-label="청구내용"><div class="cell-body">${c.case_title ? `<div class="clamp">${esc(c.case_title)}</div>` : dash}</div></td>
       <td class="cell-wide" data-label="진단명"><div class="cell-body">${c.diagnosis ? esc(c.diagnosis) : dash}</div></td>
@@ -870,7 +977,7 @@ function managementRow(c) {
       <td class="cell-docs" data-label="증권"><div class="cell-body">${companies}${policyDocs}${addDocButton(c.id, '증권')}</div></td>
       <td class="cell-docs" data-label="기타서류"><div class="cell-body">${otherDocs}${addDocButton(c.id, '기타')}</div></td>
       <td class="cell-num" data-label="추산금액"><div class="cell-body">${formatKRW(c.estimated_amount)}</div></td>
-      <td class="cell-wide" data-label="진행사항"><div class="cell-body">${c.progress ? `<div class="clamp">${esc(c.progress)}</div>` : dash}</div></td>
+      ${progressCell(c)}
       <td class="cell-actions">
         <button class="secondary" data-edit="${c.id}">수정</button>
         <button class="danger" data-delete="${c.id}">삭제</button>
@@ -1005,8 +1112,13 @@ async function renderListView() {
   tabsContainer.innerHTML = customers.length
     ? customers
         .map(
-          (c) =>
-            `<button class="company-item ${state.selectedCustomerId === c.id ? 'active' : ''}" data-customer="${c.id}">${esc(c.name)}</button>`
+          (c) => {
+            const lastProgress = (c.progress_logs || [])[0];
+            return `<button class="company-item customer-tab ${state.selectedCustomerId === c.id ? 'active' : ''}" data-customer="${c.id}">
+              <span class="tab-name">${esc(c.name)}</span>
+              ${lastProgress ? `<span class="tab-date" title="마지막 진행사항 날짜">${esc(lastProgress.log_date)}</span>` : ''}
+            </button>`;
+          }
         )
         .join('')
     : '<p class="muted">등록된 고객이 없습니다.</p>';
@@ -1272,6 +1384,7 @@ async function renderManagementView() {
     if (scroller) scroller.scrollLeft = scrollLeft;
     bindTableActions(customers);
     bindManagementDocActions(body, customers, loadManagementTable);
+    bindManagementProgressActions(body, loadManagementTable);
   }
 
   await Promise.all([loadManagementTable(), loadWorkLogs()]);

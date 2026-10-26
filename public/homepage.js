@@ -55,7 +55,11 @@ lookupForm.addEventListener('submit', async (e) => {
     lookupResult.innerHTML = `
       <div class="banner success case-lookup-result-card">
         <div>${esc(result.name)} 님의 사건 진행상황</div>
-        <div class="status">${esc(result.progress) || '아직 등록된 진행상황이 없습니다. 곧 업데이트해 드리겠습니다.'}</div>
+        ${
+          (result.progress_logs || []).length
+            ? result.progress_logs.map((l) => `<div class="status"><strong>${esc(l.log_date)}</strong> ${esc(l.content)}</div>`).join('')
+            : '<div class="status">아직 등록된 진행상황이 없습니다. 곧 업데이트해 드리겠습니다.</div>'
+        }
       </div>`;
   } catch (err) {
     lookupResult.innerHTML = `<div class="banner error">${esc(err.message)}</div>`;

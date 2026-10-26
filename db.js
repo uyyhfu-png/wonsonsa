@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS call_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_logs_phone ON call_logs(phone);
+
+CREATE TABLE IF NOT EXISTS progress_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  log_date TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_progress_logs_customer ON progress_logs(customer_id);
 `);
 
 // 기존 DB에 고객관리(사건) 컬럼이 없으면 추가
@@ -111,6 +121,21 @@ if (documentsSql.includes("'진단서'")) {
       DROP TABLE customer_documents;
       ALTER TABLE customer_documents_new RENAME TO customer_documents;
     `);
+  })();
+}
+
+// 예전의 단일 '진행사항' 글은 날짜별 진행사항 1건으로 옮기고 원본은 비움 (수정일 기준 날짜)
+const legacyProgress = db
+  .prepare("SELECT id, progress, substr(updated_at, 1, 10) AS day FROM customers WHERE progress IS NOT NULL AND trim(progress) <> ''")
+  .all();
+if (legacyProgress.length) {
+  const insertLog = db.prepare('INSERT INTO progress_logs (customer_id, log_date, content) VALUES (?, ?, ?)');
+  const clearLegacy = db.prepare('UPDATE customers SET progress = NULL WHERE id = ?');
+  db.transaction(() => {
+    for (const row of legacyProgress) {
+      insertLog.run(row.id, row.day, row.progress.trim());
+      clearLegacy.run(row.id);
+    }
   })();
 }
 
